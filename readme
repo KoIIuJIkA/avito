@@ -1,0 +1,76 @@
+
+
+Все располагается в директории avitointern, она и является главной директорией проекта
+
+
+Я поздно обнаружил файл с openapi спецификацией для тз, и часть функций реализовано моим "творческим подходом" :)
+На таких функциях будет написан WARNING или depricated
+Из-за этого я не успел подвязать данные к бд, но переход к этому уже готов. 
+Думаю этим заняться уже после того как перепишу под код apiopen.
+
+В целом я мне очень понравилось тз и я в любом случае буду его допишу.
+
+Глобально многопоток не реализовывал, но насколько мог защитил мьютектами. 
+docker, k8s, CI/CD пока не настраивал, 
+
+Процесс запуска:
+1. $ go run ./cmd/avitointern
+
+2. Через другой терминал необходимо выполнить авторизацию для получения cookie
+
+$ curl -X POST http://localhost:8080/login \      
+    -d "login=george" \                                           
+    -d "password=qwer"
+
+3. В основном терминале происходит полное логгирование всех действий клиентов 
+  и в строке вывода можно найти ID для сессии
+
+например
+auth middleware
+{"level":"info","ts":1726583309.9205592,"caller":"handlers/user.go:64","msg":"created session for 86a1e403-2791-4160-b9f1-36d531a32f08"}
+
+Под каждого клиента создается отдельная сессия и работа сервера выполняется только с авторизованы пользователями.
+Пользователь тут пока только один, как не странно это я)
+
+ID пользователей, сессий и организаций генерируются через uuid
+
+4. Создание тендера. ID в куки получаем при логине!
+valid cmd
+
+$ curl -X POST http://localhost:8080/tenders/new \                                    
+    -H "Cookie: session_id=2c1e2417-5921-4c37-bee4-3fd804be4ee4" \
+    -d "name=New%20Tender" \
+    -d "serviceType=Construction" \
+    -d "description=This%20is%20a%20new%20tender" \
+    -d "organizationId=123e4567-e89b-12d3-a456-426614174000" \
+    -d "creatorUsername=admin"
+
+5. Вывод тендеров
+Ввод уже реализовал через json
+$ curl -X GET http://localhost:8080/tenders \                                         
+  -H "Cookie: session_id=86a1e403-2791-4160-b9f1-36d531a32f08" \
+  -H "Content-Type: application/json" \
+  -d '{"service_type": ["Construction"]}'
+
+6. PING
+$ curl -X GET  http://localhost:8080/ping \
+-H "Cookie: session_id=86a1e403-2791-4160-b9f1-36d531a32f08" \
+
+7. /tenders/my 
+Подставляйте свой куки иначе не пройдет middleware с авторизацией :(
+
+$ curl -X GET http://localhost:8080/tenders/my \  
+-H "Cookie: session_id=926a5af0-93aa-4628-8da7-4609b2ba74c2" \
+-H "Content-Type: application/json" \
+-d '{  
+  "limit": 10,  
+  "offset": 0  
+}'
+
+Выведет единственную запись, если поиграться ;), то можно получить все ошибки указанные в openapi
+
+8. "/tenders/{tenderID}/status"
+curl -X GET "http://localhost:8080/tenders/6fe5c5e7-dc2a-4877-8ffd-a24ae9b73742/status?username=george" \
+-H "Cookie: session_id=34c0d9c1-091d-4bfa-a753-0256d02ee11c"
+
+"Created"
