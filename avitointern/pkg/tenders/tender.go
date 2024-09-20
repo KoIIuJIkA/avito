@@ -17,15 +17,23 @@ const (
 )
 
 type Tender struct {
-	TenderID          string      `schema:"-"`
-	TenderName        string      `schema:"name,required"`
-	TenderDescription string      `schema:"description,required"`
-	ServiceType       ServiceType `schema:"serviceType,required"`
-	Status            Status      `schema:"-"`
-	OrganizationID    string      `schema:"organizationId,required"`
-	Version           int32       `schema:"-"` // min 1, def 1
-	CreatedAt         string      `schema:"-"` // RFC3339 format.
-	Author            string      `achema:"-"`
+	TenderID          string               `json:"tenderID"`
+	TenderName        string               `json:"TenderName"`
+	TenderDescription string               `json:"TenderDescription"`
+	ServiceType       ServiceType          `json:"ServiceType"`
+	Status            Status               `json:"Status"`
+	OrganizationID    string               `json:"OrganizationID"`
+	Version           int32                `json:"Version"`   // min 1, def 1
+	CreatedAt         string               `json:"CreatedAt"` // RFC3339 format.
+	Author            string               `json:"Author"`
+	Versions          map[int32]*TenderVer `json:"Versions"`
+}
+
+type TenderVer struct {
+	TenderName        string `json:"name"`
+	TenderDescription string `json:"description"`
+	ServiceType       string `json:"serviceType"`
+	Version           int32  `json:"Version"`
 }
 
 type TendersRepo interface {
@@ -34,6 +42,4 @@ type TendersRepo interface {
 	GetByID(id string) (*Tender, error)
 	GetMy(limit, offset int32, username string) ([]*Tender, error)
 	Add(tender *Tender) (string, error)
-	Update(newItem *Tender) (bool, error)
-	Delete(id string) (bool, error)
 }

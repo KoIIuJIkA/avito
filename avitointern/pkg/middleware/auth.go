@@ -30,10 +30,10 @@ func Auth(sm *session.SessionsManager, next http.Handler) http.Handler {
 			http.Redirect(w, r, "/", 302)
 			return
 		}
-		fmt.Println("sess in auth ", sess)
+		// fmt.Println("sess in auth ", sess, " ", sess.User.OrganizationID)
 		ctx := session.ContextWithSession(r.Context(), sess)
-		fmt.Println("ctx in auth ", ctx)
-		fmt.Println("\nr.WithContext(ctx) = ", r.WithContext(ctx))
+		// fmt.Println("ctx in auth ", ctx)
+		// fmt.Println("\nr.WithContext(ctx) = ", r.WithContext(ctx))
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

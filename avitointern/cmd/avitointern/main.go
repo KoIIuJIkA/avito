@@ -72,14 +72,13 @@ func main() {
 	r.HandleFunc("/login", userHandler.Login).Methods("POST")
 	r.HandleFunc("/logout", userHandler.Logout).Methods("POST")
 
-	r.HandleFunc("/tenders", handlers.List).Methods("GET")
-	r.HandleFunc("/tenders/new", handlers.NewForm).Methods("GET")
+	r.HandleFunc("/tenders", handlers.Tenders).Methods("GET")
 	r.HandleFunc("/tenders/new", handlers.New).Methods("POST")
 	r.HandleFunc("/tenders/my", handlers.My).Methods("GET")
 	r.HandleFunc("/tenders/{tenderID}/status", handlers.GetStatus).Methods("GET")
-	r.HandleFunc("/tenders/{id}", handlers.Edit).Methods("GET")
-	r.HandleFunc("/tenders/{id}", handlers.Update).Methods("POST")
-	r.HandleFunc("/tenders/{id}", handlers.Delete).Methods("DELETE")
+	r.HandleFunc("/tenders/{tenderID}/status", handlers.EditStatus).Methods("PUT")
+	r.HandleFunc("/tenders/{tenderID}/edit", handlers.Edit).Methods("PATCH")
+	r.HandleFunc("/tenders/{tenderID}/rollback/{version}", handlers.Rollback).Methods("PUT")
 
 	mux := middleware.Auth(sm, r)
 	mux = middleware.AccessLog(logger, mux)

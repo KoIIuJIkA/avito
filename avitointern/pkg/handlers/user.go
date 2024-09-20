@@ -49,7 +49,9 @@ func (h *UserHandler) Ping(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
-	u, err := h.UserRepo.Authorize(r.FormValue("login"), r.FormValue("password"))
+	login := r.URL.Query().Get("login")
+	password := r.URL.Query().Get("password")
+	u, err := h.UserRepo.Authorize(login, password)
 	if err == user.ErrNoUser {
 		http.Error(w, `no user`, http.StatusBadRequest)
 		return
