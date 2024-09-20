@@ -2,75 +2,100 @@
 
 Все располагается в директории avitointern, она и является главной директорией проекта
 
-
-Я поздно обнаружил файл с openapi спецификацией для тз, и часть функций реализовано моим "творческим подходом" :)
-На таких функциях будет написан WARNING или depricated
-Из-за этого я не успел подвязать данные к бд, но переход к этому уже готов. 
-Думаю этим заняться уже после того как перепишу под код apiopen.
+{ Текст с последнего коммита
+  Я поздно обнаружил файл с openapi спецификацией для тз, и часть функций реализовано моим "творческим подходом" :)
+  На таких функциях будет написан WARNING или depricated
+  Из-за этого я не успел подвязать данные к бд, но переход к этому уже готов. 
+  Думаю этим заняться уже после того как перепишу под код apiopen.
+}
 
 В целом я мне очень понравилось тз и я в любом случае буду его допишу.
 
-Глобально многопоток не реализовывал, но насколько мог защитил мьютектами. 
-docker, k8s, CI/CD пока не настраивал, 
+Реализовано все взаимодействие с тендерами в сооттветствии с openapi
+Есть задел под бд и многопоток, для чего все было защищино мьютексами
+docker, k8s, CI/CD пока не настраивал
 
 Процесс запуска:
 1. $ go run ./cmd/avitointern
 
+
 2. Через другой терминал необходимо выполнить авторизацию для получения cookie
 
-$ curl -X POST http://localhost:8080/login \      
-    -d "login=george" \                                           
-    -d "password=qwer"
+$ curl -X POST "http://localhost:8080/login?login=george&password=qwer"
 
-3. В основном терминале происходит полное логгирование всех действий клиентов 
-  и в строке вывода можно найти ID для сессии
+- Каждому пользователю выдается свой куки, сгенерированный на основе uuid. Вся дальнейшая коммуникация происходит с использованием выданных куки. 
 
-например
-auth middleware
-{"level":"info","ts":1726583309.9205592,"caller":"handlers/user.go:64","msg":"created session for 86a1e403-2791-4160-b9f1-36d531a32f08"}
+- В основном терминале в логах будет указан сам выданный куки сразу после auth middleware 
+{"level":"info","ts":1726818926.632395,"caller":"handlers/user.go:66","msg":"created session for a8892cb8-8203-4d76-a047-637027868159"}
 
-Под каждого клиента создается отдельная сессия и работа сервера выполняется только с авторизованы пользователями.
-Пользователь тут пока только один, как не странно это я)
+created session for xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx и есть куки в формате uuid.
+ID для пользователей, организаций и тендеров также выдаются через uuid.
 
-ID пользователей, сессий и организаций генерируются через uuid
+------
+4. Создание тендера.
+Куки, который мы получили на предыдущем сейчас нам понадобится для создания тендера и всех команд (нас не пропустит auth middleware без куки).
 
-4. Создание тендера. ID в куки получаем при логине!
-valid cmd
-
-$ curl -X POST http://localhost:8080/tenders/new \                                    
-    -H "Cookie: session_id=2c1e2417-5921-4c37-bee4-3fd804be4ee4" \
-    -d "name=New%20Tender" \
-    -d "serviceType=Construction" \
-    -d "description=This%20is%20a%20new%20tender" \
-    -d "organizationId=123e4567-e89b-12d3-a456-426614174000" \
-    -d "creatorUsername=admin"
+$ curl -X POST http://localhost:8080/tenders/new \                    
+    -H "Content-Type: application/json" \
+    -H "Cookie: session_id=a8892cb8-8203-4d76-a047-637027868159" \
+    -d '{
+        "name": "New Tender",
+        "description": "This is a new tender",
+        "organizationId": "123e4567-e89b-12d3-a456-426614174000",
+        "creatorUsername": "admin"
+    }'
+  
+Также в логах сразу после auth middleware при успешном вводе мы увидим 
+"msg":"Insert with id LastInsertId: 0d1df2ea-4b77-41a8-abdc-284082720e82"
+Где LastInsertId - uuid последнего добавленного тендера.
 
 5. Вывод тендеров
-Ввод уже реализовал через json
-$ curl -X GET http://localhost:8080/tenders \                                         
-  -H "Cookie: session_id=86a1e403-2791-4160-b9f1-36d531a32f08" \
-  -H "Content-Type: application/json" \
-  -d '{"service_type": ["Construction"]}'
+        $ curl -X GET "http://localhost:8080/tenders?limit=5&offset=0&service_type=[]" \
+    -H "Cookie: session_id=a8892cb8-8203-4d76-a047-637027868159" 
 
 6. PING
-$ curl -X GET  http://localhost:8080/ping \
--H "Cookie: session_id=86a1e403-2791-4160-b9f1-36d531a32f08" \
+    $ curl -X GET  http://localhost:8080/ping \
+    -H "Cookie: session_id=86a1e403-2791-4160-b9f1-36d531a32f08" \
 
 7. /tenders/my 
-Подставляйте свой куки иначе не пройдет middleware с авторизацией :(
+      $ curl -X GET "http://localhost:8080/tenders/my?limit=10&offset=0" \             
+    -H "Cookie: session_id=a8892cb8-8203-4d76-a047-637027868159"
 
-$ curl -X GET http://localhost:8080/tenders/my \  
--H "Cookie: session_id=926a5af0-93aa-4628-8da7-4609b2ba74c2" \
--H "Content-Type: application/json" \
--d '{  
-  "limit": 10,  
-  "offset": 0  
-}'
-
-Выведет единственную запись, если поиграться ;), то можно получить все ошибки указанные в openapi
 
 8. "/tenders/{tenderID}/status"
-curl -X GET "http://localhost:8080/tenders/6fe5c5e7-dc2a-4877-8ffd-a24ae9b73742/status?username=george" \
--H "Cookie: session_id=34c0d9c1-091d-4bfa-a753-0256d02ee11c"
+  ID тендера можно получить из лога в /tenders/new 
+      $ curl -X GET "http://localhost:8080/tenders/0d1df2ea-4b77-41a8-abdc-284082720e82/status?username=george" \
+    -H "Cookie: session_id=a8892cb8-8203-4d76-a047-637027868159" 
 
+Вывод:
 "Created"
+
+7. /tenders/{tenderID}/status
+
+      $ curl -X PUT "http://localhost:8080/tenders/88abae1e-8bdd-4942-bf2c-69af7ff4ea5f/status?status=Published&username=george" \                                                      
+    -H "Cookie: session_id=97160098-61a3-4eac-9451-79fd26fde3c9"
+ 
+  Вывод:  
+"Created"
+{"id":"88abae1e-8bdd-4942-bf2c-69af7ff4ea5f","name":"","description":"","status":"Published","serviceType":"","version":2,"createdAt":"2024-09-20T12:02:22+03:00"}
+
+8. /tenders/{tenderID}/rollback/{version}
+
+  curl -X PATCH "http://localhost:8080/tenders/b37ab8db-6bbb-4147-b5dc-d25b632b17bf/edit?username=george" \
+    -H "Cookie: session_id=108e1e43-10ae-428d-bdcd-eeb57b7496c3" \
+    -H "Content-type: application/json" \
+    -d '{
+    "name": "george",
+    "description": "NEW_DESCRIPT",
+    "serviceType": "Manufacture"
+    }'
+
+    Вывод:
+"Created"
+{"id":"b37ab8db-6bbb-4147-b5dc-d25b632b17bf","name":"george","description":"NEW_DESCRIPT","status":"Created","serviceType":"Manufacture","version":2,"createdAt":"2024-09-20T12:12:14+03:00"}
+
+9. /tenders/{tenderID}/rollback/{version}
+      $ curl -X PUT "http://localhost:8080/tenders/c27f2967-cd2a-441e-b395-5e9217ec9483/rollback/1?username=george" \
+    -H "Cookie: session_id=edc8a074-b200-4e3b-b799-447162cde86e"
+"Created"
+{"id":"c27f2967-cd2a-441e-b395-5e9217ec9483","name":"","description":"","status":"Created","serviceType":"","version":2,"createdAt":"2024-09-20T12:41:21+03:00"}
