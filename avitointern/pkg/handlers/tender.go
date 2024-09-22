@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"time"
 
+	"avitointern/pkg/database"
 	"avitointern/pkg/session"
 	"avitointern/pkg/tenders"
-	"avitointern/pkg/user"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
@@ -18,6 +18,7 @@ import (
 )
 
 type TendersHandler struct {
+	SQL         database.Database
 	Tmpl        *template.Template
 	TendersRepo tenders.TendersRepo
 	Logger      *zap.SugaredLogger
@@ -36,23 +37,15 @@ type TenderResponse struct {
 func (h *TendersHandler) Tenders(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	var errorResponse struct {
-		Reason string `json:"reason"`
-	}
-
 	limit, err := parseInt32(r, "limit", 5)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		errorResponse.Reason = "Bad query"
-		json.NewEncoder(w).Encode(errorResponse)
+		h.errSend(w, "bad query", 400)
 		return
 	}
 
 	offset, err := parseInt32(r, "offset", 0)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		errorResponse.Reason = "Bad query"
-		json.NewEncoder(w).Encode(errorResponse)
+		h.errSend(w, "bad query", 400)
 		return
 	}
 
@@ -63,10 +56,9 @@ func (h *TendersHandler) Tenders(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	fmt.Println("limit = ", limit, ", offset = ", offset, ", serviceType = ", serviceType)
-	tenders, err := h.TendersRepo.GetQuery(limit, offset, serviceType)
+	tenders, err := h.SQL.GetQuery(limit, offset, serviceType)
 	if err != nil {
-		http.Error(w, `DB err`, http.StatusInternalServerError)
+		h.errSend(w, "db err", 500)
 		return
 	}
 
@@ -74,11 +66,9 @@ func (h *TendersHandler) Tenders(w http.ResponseWriter, r *http.Request) {
 		fmt.Println(elem)
 	}
 
-	fmt.Println(tenders)
-
 	err = json.NewEncoder(w).Encode(tenders)
 	if err != nil {
-		http.Error(w, `JSON encoding error`, http.StatusInternalServerError)
+		h.errSend(w, "json encoding error", 500)
 		return
 	}
 }
@@ -86,209 +76,181 @@ func (h *TendersHandler) Tenders(w http.ResponseWriter, r *http.Request) {
 func (h *TendersHandler) New(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	var errorResponse struct {
-		Reason string     `json:"reason"`
-		Debug  *user.User `json:"debug"`
-	}
-	sess, _ := session.SessionFromContext(r.Context())
+	sess, err := session.SessionFromContext(r.Context())
 	if sess.User.OrganizationID == "" {
-		w.WriteHeader(http.StatusForbidden)
-		errorResponse.Reason = "User does not have an organization"
-		errorResponse.Debug = sess.User
-		json.NewEncoder(w).Encode(errorResponse)
+		h.errSend(w, "user does not have an organization", 403)
+		return
+	}
+	if err != nil {
+		h.errSend(w, "err with sess", 400)
 		return
 	}
 
-	r.ParseForm()
-	tender := new(tenders.Tender)
+	if err = r.ParseForm(); err != nil {
+		h.errSend(w, "err with parseform", 400)
+		return
+	}
 	var updateRequest struct {
-		Name           *string `json:"name"`
-		Description    *string `json:"description"`
-		OrganizationId *string `json:"organizationId"`
-		Author         *string `json:"creatorUsername"`
+		Name           *string              `json:"name"`
+		Description    *string              `json:"description"`
+		ServiceType    *tenders.ServiceType `json:"serviceType"`
+		OrganizationID *string              `json:"organizationId"`
+		Author         *string              `json:"creatorUsername"`
 	}
-
-	if err := json.NewDecoder(r.Body).Decode(&updateRequest); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		errorResponse.Reason = "Invalid request body."
-		json.NewEncoder(w).Encode(errorResponse)
+	if err = json.NewDecoder(r.Body).Decode(&updateRequest); err != nil {
+		h.errSend(w, "invalid request body", 400)
+		return
+	}
+	if updateRequest.Name == nil || updateRequest.Description == nil ||
+		updateRequest.OrganizationID == nil || updateRequest.Author == nil {
+		h.errSend(w, "bad json parse", 401)
 		return
 	}
 
-	if updateRequest.Name == nil || updateRequest.Description == nil || updateRequest.OrganizationId == nil || updateRequest.Author == nil {
-		w.WriteHeader(http.StatusUnauthorized)
-		errorResponse.Reason = "bad json parse"
-		json.NewEncoder(w).Encode(errorResponse)
-		return
-	}
-
+	tender := new(tenders.Tender)
 	tender.TenderID = uuid.New().String()
+	tender.TenderName = *updateRequest.Name
+	tender.TenderDescription = *updateRequest.Description
+	tender.ServiceType = *updateRequest.ServiceType
 	tender.Status = tenders.Created
+	tender.OrganizationID = *updateRequest.OrganizationID
 	tender.Version = 1
 	tender.CreatedAt = time.Now().Format(time.RFC3339) // RFC3339 format.
 	tender.Author = sess.User.Username
 	tender.Versions = make(map[int32]*tenders.TenderVer)
+
 	tender.Versions[tender.Version] = &tenders.TenderVer{
 		TenderName:        tender.TenderName,
 		TenderDescription: tender.TenderDescription,
 		ServiceType:       string(tender.ServiceType),
 		Version:           1,
+		Status:            tender.Status,
 	}
 
-	lastID, err := h.TendersRepo.Add(tender)
+	lastID, err := h.SQL.InsertTender(tender)
 	if err != nil {
-		http.Error(w, `DB err`, http.StatusInternalServerError)
+		h.errSend(w, "sql DB err", 500)
 		return
 	}
-	w.WriteHeader(http.StatusOK)
 
+	w.WriteHeader(http.StatusOK)
 	h.Logger.Infof("Insert with id LastInsertId: %v", lastID)
 }
 
 func (h *TendersHandler) My(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 
-	var errorResponse struct {
-		Reason string `json:"reason"`
-	}
-
 	limit, err := parseInt32(r, "limit", 5)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		errorResponse.Reason = "Bad query in limit"
-		json.NewEncoder(w).Encode(errorResponse)
+		h.errSend(w, "bad query in limit", 400)
 		return
 	}
 
 	offset, err := parseInt32(r, "offset", 0)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		errorResponse.Reason = "Bad query in offset"
-		json.NewEncoder(w).Encode(errorResponse)
+		h.errSend(w, "bad query in offset", 400)
 		return
 	}
 
-	sess, _ := session.SessionFromContext(r.Context())
+	username := r.URL.Query().Get("username")
 
-	tenders, err := h.TendersRepo.GetMy(limit, offset, sess.User.Username)
+	sess, err := session.SessionFromContext(r.Context())
 	if err != nil {
-		http.Error(w, `DB err`, http.StatusInternalServerError)
+		h.errSend(w, "session err", 500)
+		return
+	}
+	if username != sess.User.Username {
+		h.errSend(w, "session and username err", 500)
 		return
 	}
 
-	for _, elem := range tenders {
-		fmt.Println(elem)
+	tenders, err := h.SQL.My(limit, offset, sess.User.Username)
+	if err != nil {
+		h.errSend(w, "db err", 500)
+		return
 	}
 
 	err = json.NewEncoder(w).Encode(tenders)
 	if err != nil {
-		http.Error(w, `JSON encoding error`, http.StatusInternalServerError)
+		h.errSend(w, "json encoding error", 500)
 		return
 	}
 }
 
 func (h *TendersHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	var errorResponse struct {
-		Reason string `json:"reason"`
-	}
-	username := r.URL.Query().Get("username")
-	sess, _ := session.SessionFromContext(r.Context())
 
+	username := r.URL.Query().Get("username")
+	sess, err := session.SessionFromContext(r.Context())
 	if username != sess.User.Username {
-		w.WriteHeader(http.StatusUnauthorized)
-		errorResponse.Reason = "User Unauthorized"
-		json.NewEncoder(w).Encode(errorResponse)
+		h.errSend(w, "user Unauthorized", 401)
 		return
 	}
-	if !h.TendersRepo.Check(username) {
-		w.WriteHeader(http.StatusForbidden)
-		errorResponse.Reason = "There are not enough permissions to perform the action."
-		json.NewEncoder(w).Encode(errorResponse)
+	if err != nil {
+		h.errSend(w, "session err", 400)
 		return
 	}
 
 	vars := mux.Vars(r)
 	id := vars["tenderID"]
-	elem, err := h.TendersRepo.GetByID(id)
+	elem, err := h.SQL.GetTenderByID(id)
+	if err != nil {
+		h.errSend(w, "err with GetTenderByID", 400)
+		return
+	}
 	if elem == nil {
-		w.WriteHeader(http.StatusNotFound)
-		errorResponse.Reason = "The tender was not found."
-		json.NewEncoder(w).Encode(errorResponse)
+		h.errSend(w, "the tender was not found", 404)
+		return
+	}
+	if elem.Author != username {
+		h.errSend(w, "there are not enough permissions to perform the action", 403)
 		return
 	}
 
 	err = json.NewEncoder(w).Encode(elem.Status)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		errorResponse.Reason = "bad json encode"
-		json.NewEncoder(w).Encode(errorResponse)
+		h.errSend(w, "bad json encode", 400)
 		return
 	}
-	w.WriteHeader(http.StatusOK)
 
+	w.WriteHeader(http.StatusOK)
 	h.Logger.Infof("Status by ID: %v", elem.Status)
 }
 
 func (h *TendersHandler) EditStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	var errorResponse struct {
-		Reason string `json:"reason"`
-	}
 
 	status := r.URL.Query().Get("status")
 	if status == "" || !ContainsString([]string{"Created", "Published", "Closed"}, status) {
-		w.WriteHeader(http.StatusBadRequest)
-		errorResponse.Reason = "invalid format status."
-		json.NewEncoder(w).Encode(errorResponse)
+		h.errSend(w, "invalid format status", 400)
 		return
 	}
 
 	username := r.URL.Query().Get("username")
 	if username == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		errorResponse.Reason = "invalid format username."
-		json.NewEncoder(w).Encode(errorResponse)
+		h.errSend(w, "invalid format username", 400)
 		return
 	}
-	sess, _ := session.SessionFromContext(r.Context())
+	sess, err := session.SessionFromContext(r.Context())
 	if username != sess.User.Username {
-		w.WriteHeader(http.StatusUnauthorized)
-		errorResponse.Reason = "User Unauthorized"
-		json.NewEncoder(w).Encode(errorResponse)
+		h.errSend(w, "user Unauthorized", 401)
 		return
 	}
-	if !h.TendersRepo.Check(username) {
-		w.WriteHeader(http.StatusForbidden)
-		errorResponse.Reason = "There are not enough permissions to perform the action."
-		json.NewEncoder(w).Encode(errorResponse)
+	if err != nil {
+		h.errSend(w, "sess err", 400)
 		return
 	}
 
 	vars := mux.Vars(r)
 	tenderID := vars["tenderID"]
-	elem, err := h.TendersRepo.GetByID(tenderID)
+	elem, err := h.SQL.UpdateTenderStatus(tenderID, tenders.Status(status))
 	if elem == nil {
-		w.WriteHeader(http.StatusNotFound)
-		errorResponse.Reason = "The tender was not found."
-		json.NewEncoder(w).Encode(errorResponse)
+		h.errSend(w, "the tender was not found", 404)
 		return
 	}
-	err = json.NewEncoder(w).Encode(elem.Status)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		errorResponse.Reason = "bad json encode"
-		json.NewEncoder(w).Encode(errorResponse)
+		h.errSend(w, "bad json encode", 400)
 		return
-	}
-
-	elem.Status = tenders.Status(status)
-	elem.Version = int32(len(elem.Versions))
-	elem.Versions[elem.Version] = &tenders.TenderVer{
-		TenderName:        elem.TenderName,
-		TenderDescription: elem.TenderDescription,
-		ServiceType:       string(elem.ServiceType),
-		Version:           elem.Version,
 	}
 
 	tender := TenderResponse{
@@ -301,41 +263,30 @@ func (h *TendersHandler) EditStatus(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:         elem.CreatedAt,
 	}
 
-	fmt.Println(tender) // delDEL
-
-	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(tender); err != nil {
-		http.Error(w, `{"reason": "Error encoding JSON"}`, http.StatusInternalServerError)
+		h.errSend(w, "error encoding JSON", 500)
 		return
 	}
 
+	w.WriteHeader(http.StatusOK)
 	h.Logger.Infof("Edit status by ID: %v", elem.Status)
 }
 
 func (h *TendersHandler) Edit(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	var errorResponse struct {
-		Reason string `json:"reason"`
-	}
 
 	username := r.URL.Query().Get("username")
 	if username == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		errorResponse.Reason = "invalid format username."
-		json.NewEncoder(w).Encode(errorResponse)
+		h.errSend(w, "invalid format username", 400)
 		return
 	}
-	sess, _ := session.SessionFromContext(r.Context())
+	sess, err := session.SessionFromContext(r.Context())
 	if username != sess.User.Username {
-		w.WriteHeader(http.StatusUnauthorized)
-		errorResponse.Reason = "User Unauthorized"
-		json.NewEncoder(w).Encode(errorResponse)
+		h.errSend(w, "user Unauthorized", 401)
 		return
 	}
-	if !h.TendersRepo.Check(username) {
-		w.WriteHeader(http.StatusForbidden)
-		errorResponse.Reason = "There are not enough permissions to perform the action."
-		json.NewEncoder(w).Encode(errorResponse)
+	if err != nil {
+		h.errSend(w, "sess err", 400)
 		return
 	}
 
@@ -344,28 +295,26 @@ func (h *TendersHandler) Edit(w http.ResponseWriter, r *http.Request) {
 		Description *string `json:"description"`
 		ServiceType *string `json:"serviceType"`
 	}
-
-	if err := json.NewDecoder(r.Body).Decode(&updateRequest); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		errorResponse.Reason = "Invalid request body."
-		json.NewEncoder(w).Encode(errorResponse)
+	if err = json.NewDecoder(r.Body).Decode(&updateRequest); err != nil {
+		h.errSend(w, "invalid request body", 400)
 		return
 	}
 
 	vars := mux.Vars(r)
 	tenderID := vars["tenderID"]
-	elem, err := h.TendersRepo.GetByID(tenderID)
+	elem, err := h.SQL.GetTenderByID(tenderID)
 	if elem == nil {
-		w.WriteHeader(http.StatusNotFound)
-		errorResponse.Reason = "The tender was not found."
-		json.NewEncoder(w).Encode(errorResponse)
+		h.errSend(w, "the tender was not found", 404)
 		return
 	}
+	if err != nil {
+		h.errSend(w, "err with GetTenderByID", 400)
+		return
+	}
+
 	err = json.NewEncoder(w).Encode(elem.Status)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		errorResponse.Reason = "bad json encode"
-		json.NewEncoder(w).Encode(errorResponse)
+		h.errSend(w, "bad json encode", 400)
 		return
 	}
 
@@ -379,122 +328,80 @@ func (h *TendersHandler) Edit(w http.ResponseWriter, r *http.Request) {
 		elem.ServiceType = tenders.ServiceType(*updateRequest.ServiceType)
 	}
 
+	var tender *tenders.Tender
 	if updateRequest.Name != nil || updateRequest.Description != nil || updateRequest.ServiceType != nil {
-		elem.Version = int32(len(elem.Versions))
-		elem.Versions[elem.Version] = &tenders.TenderVer{
-			TenderName:        elem.TenderName,
-			TenderDescription: elem.TenderDescription,
-			ServiceType:       string(elem.ServiceType),
+		tender, err = h.SQL.EditTender(elem.TenderID, elem.TenderName, elem.TenderDescription, elem.ServiceType)
+		if err != nil {
+			h.errSend(w, "my tender err", 500)
+			return
 		}
 	}
-
-	tender := &TenderResponse{
-		TenderID:          elem.TenderID,
-		TenderName:        elem.TenderName,
-		TenderDescription: elem.TenderDescription,
-		Status:            string(elem.Status),
-		ServiceType:       string(elem.ServiceType),
-		Version:           elem.Version,
-		CreatedAt:         elem.CreatedAt,
-	}
-
-	fmt.Println(tender) // delDEL
-
-	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(tender); err != nil {
-		http.Error(w, `{"reason": "Error encoding JSON"}`, http.StatusInternalServerError)
+		h.errSend(w, "error encoding JSON", 500)
 		return
 	}
 
+	w.WriteHeader(http.StatusOK)
 	h.Logger.Infof("EditTender PUT status by ID: %v", elem.Status)
 }
 
 func (h *TendersHandler) Rollback(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	var errorResponse struct {
-		Reason string `json:"reason"`
-	}
 
 	username := r.URL.Query().Get("username")
 	if username == "" {
-		w.WriteHeader(http.StatusBadRequest)
-		errorResponse.Reason = "invalid format username."
-		json.NewEncoder(w).Encode(errorResponse)
+		h.errSend(w, "invalid format username", 400)
 		return
 	}
-	sess, _ := session.SessionFromContext(r.Context())
+	sess, err := session.SessionFromContext(r.Context())
 	if username != sess.User.Username {
-		w.WriteHeader(http.StatusUnauthorized)
-		errorResponse.Reason = "User Unauthorized"
-		json.NewEncoder(w).Encode(errorResponse)
+		h.errSend(w, "user Unauthorized", 401)
 		return
 	}
-	if !h.TendersRepo.Check(username) {
-		w.WriteHeader(http.StatusForbidden)
-		errorResponse.Reason = "There are not enough permissions to perform the action."
-		json.NewEncoder(w).Encode(errorResponse)
+	if err != nil {
+		h.errSend(w, "sess err", 400)
 		return
 	}
 
 	vars := mux.Vars(r)
 	tenderID := vars["tenderID"]
-	elem, err := h.TendersRepo.GetByID(tenderID)
+	elem, err := h.SQL.GetTenderByID(tenderID)
 	if elem == nil {
-		w.WriteHeader(http.StatusNotFound)
-		errorResponse.Reason = "The tender was not found."
-		json.NewEncoder(w).Encode(errorResponse)
+		h.errSend(w, "the tender was not found", 404)
 		return
 	}
+	if err != nil {
+		h.errSend(w, "err with GetTenderByID", 400)
+		return
+	}
+
 	err = json.NewEncoder(w).Encode(elem.Status)
 	if err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		errorResponse.Reason = "bad json encode"
-		json.NewEncoder(w).Encode(errorResponse)
+		h.errSend(w, "bad json encode", 400)
 		return
 	}
 
 	versionStr := vars["version"]
 	version, err := strconv.ParseInt(versionStr, 10, 32)
 	if err != nil {
-		w.WriteHeader(http.StatusNotFound)
-		errorResponse.Reason = "Bad parse version"
-		json.NewEncoder(w).Encode(errorResponse)
+		h.errSend(w, "bad parse version", 404)
 		return
 	}
 
-	if _, err := elem.Versions[int32(version)]; !err {
-		w.WriteHeader(http.StatusNotFound)
-		errorResponse.Reason = "There is no such version"
-		json.NewEncoder(w).Encode(errorResponse)
+	tender, err := h.SQL.Rollback(tenderID, int32(version))
+	if err != nil {
+		h.errSend(w, "bad sql request wherer", 404)
 		return
-	}
-
-	rollbackTender := elem.Versions[int32(version)]
-	rollbackTender.Version = int32(len(elem.Versions))
-	elem.Versions[rollbackTender.Version] = rollbackTender
-
-	elem.TenderName = rollbackTender.TenderName
-	elem.TenderDescription = rollbackTender.TenderDescription
-	elem.ServiceType = tenders.ServiceType(rollbackTender.ServiceType)
-
-	tender := TenderResponse{
-		TenderID:          elem.TenderID,
-		TenderName:        elem.TenderName,
-		TenderDescription: elem.TenderDescription,
-		Status:            string(elem.Status),
-		ServiceType:       string(elem.ServiceType),
-		Version:           elem.Version,
-		CreatedAt:         elem.CreatedAt,
 	}
 
 	fmt.Println(tender)
 
-	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(tender); err != nil {
-		http.Error(w, `{"reason": "Error encoding JSON"}`, http.StatusInternalServerError)
+		h.errSend(w, "error encoding JSON", 500)
 		return
 	}
 
+	w.WriteHeader(http.StatusOK)
 	h.Logger.Infof("EditTender PUT status by ID: %v", elem.Status)
 }
 
@@ -508,7 +415,6 @@ func ContainsString(slice []string, value string) bool {
 }
 
 func parseInt32(r *http.Request, param string, defaultVal int32) (int32, error) {
-
 	re := r.URL.Query()
 	if strNum := re.Get(param); strNum != "" {
 		num, err := strconv.ParseInt(strNum, 10, 32)
@@ -517,6 +423,17 @@ func parseInt32(r *http.Request, param string, defaultVal int32) (int32, error) 
 		}
 		return int32(num), nil
 	}
-
 	return defaultVal, nil
+}
+
+func (h *TendersHandler) errSend(w http.ResponseWriter, reason string, status int) {
+	var errorResponse struct {
+		Reason string `json:"reason"`
+	}
+	w.WriteHeader(status)
+	errorResponse.Reason = reason
+	err := json.NewEncoder(w).Encode(errorResponse)
+	if err != nil {
+		h.Logger.Infof("err in h.errSend with encode")
+	}
 }

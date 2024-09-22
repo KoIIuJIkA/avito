@@ -1,8 +1,8 @@
 package handlers
 
 import (
-	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 	"time"
 
@@ -22,7 +22,7 @@ type UserHandler struct {
 func (h *UserHandler) Index(w http.ResponseWriter, r *http.Request) {
 	_, err := session.SessionFromContext(r.Context())
 	if err == nil {
-		http.Redirect(w, r, "/tenders", 302)
+		http.Redirect(w, r, "/tenders", http.StatusFound)
 		return
 	}
 
@@ -40,11 +40,11 @@ func (h *UserHandler) Ping(w http.ResponseWriter, r *http.Request) {
 
 	_, err := client.Get("http://localhost:8080")
 	if err != nil {
-		fmt.Println("Error:", err)
+		log.Println("Error:", err)
 		http.Redirect(w, r, "/", http.StatusInternalServerError)
 		return
 	}
-	w.Write([]byte("Ok"))
+
 	http.Redirect(w, r, "/", http.StatusOK)
 }
 
@@ -61,13 +61,19 @@ func (h *UserHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sess, _ := h.Sessions.Create(w, u)
+	sess, err := h.Sessions.Create(w, u)
+	if err != nil {
+		log.Println("err in sess in handlers/user.go")
+	}
 
 	h.Logger.Infof("created session for %v", sess.UserID)
-	http.Redirect(w, r, "/", 302)
+	http.Redirect(w, r, "/", http.StatusFound)
 }
 
 func (h *UserHandler) Logout(w http.ResponseWriter, r *http.Request) {
-	h.Sessions.DestroyCurrent(w, r)
-	http.Redirect(w, r, "/", 302)
+	err := h.Sessions.DestroyCurrent(w, r)
+	if err != nil {
+		h.Logger.Infof("err in logout")
+	}
+	http.Redirect(w, r, "/", http.StatusFound)
 }

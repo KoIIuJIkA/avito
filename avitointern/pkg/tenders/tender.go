@@ -34,6 +34,7 @@ type TenderVer struct {
 	TenderDescription string `json:"description"`
 	ServiceType       string `json:"serviceType"`
 	Version           int32  `json:"Version"`
+	Status            Status `json:"status"`
 }
 
 type TendersRepo interface {

@@ -1,13 +1,11 @@
 package main
 
 import (
-	"context"
-	"fmt"
 	"html/template"
 	"log"
 	"net/http"
-	"os"
 
+	"avitointern/pkg/database"
 	"avitointern/pkg/handlers"
 	"avitointern/pkg/middleware"
 	"avitointern/pkg/session"
@@ -15,43 +13,30 @@ import (
 	"avitointern/pkg/user"
 
 	"github.com/gorilla/mux"
-	"github.com/jackc/pgx/v4"
-	"github.com/joho/godotenv"
 	"go.uber.org/zap"
 )
 
 func main() {
-	if err := godotenv.Load(); err != nil {
-		log.Println("No .env file found, proceeding with environment variables")
-	}
-
-	serverAddress := os.Getenv("SERVER_ADDRESS")
-	postgresConn := os.Getenv("POSTGRES_CONN")
-	postgresUsername := os.Getenv("POSTGRES_USERNAME")
-	postgresPassword := os.Getenv("POSTGRES_PASSWORD")
-	postgresHost := os.Getenv("POSTGRES_HOST")
-	postgresPort := os.Getenv("POSTGRES_PORT")
-	postgresDatabase := os.Getenv("POSTGRES_DATABASE")
-
-	fmt.Println(serverAddress, postgresConn)
-	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s", postgresUsername, postgresPassword, postgresHost, postgresPort, postgresDatabase)
-
-	conn, err := pgx.Connect(context.Background(), dsn)
-	if err != nil {
-		log.Fatalf("Unable to connect to database: %v", err)
-	}
-	defer conn.Close(context.Background())
-	fmt.Println("Successfully connected to the database!")
 
 	templates := template.Must(template.ParseGlob("./static/html/*"))
 
 	sm := session.NewSessionsManager()
-	zapLogger, _ := zap.NewProduction()
-	defer zapLogger.Sync()
+	zapLogger, err := zap.NewProduction()
+	if err != nil {
+		log.Println("err with zapLogger")
+	}
+	defer func() {
+		err = zapLogger.Sync()
+		if err != nil {
+			log.Println("zapLog err")
+		}
+	}()
 	logger := zapLogger.Sugar()
 
 	userRepo := user.NewMemoryRepo()
 	tendersRepo := tenders.NewMemoryRepo()
+	sqlManager := database.NewMemoryRepo()
+	sqlManager.Init()
 
 	userHandler := &handlers.UserHandler{
 		Tmpl:     templates,
@@ -61,6 +46,7 @@ func main() {
 	}
 
 	handlers := &handlers.TendersHandler{
+		SQL:         sqlManager,
 		Tmpl:        templates,
 		Logger:      logger,
 		TendersRepo: tendersRepo,
@@ -89,5 +75,9 @@ func main() {
 		"type", "START",
 		"addr", addr,
 	)
-	http.ListenAndServe(addr, mux)
+	err = http.ListenAndServe(addr, mux)
+	if err != nil {
+		log.Println("err with ListenAndServe")
+	}
+	handlers.SQL.Close()
 }

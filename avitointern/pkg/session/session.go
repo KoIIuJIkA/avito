@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"log"
 )
 
 type Session struct {
@@ -16,7 +17,10 @@ type Session struct {
 
 func NewSession(user *user.User) *Session {
 	randID := make([]byte, 16)
-	rand.Read(randID)
+	_, err := rand.Read(randID)
+	if err != nil {
+		log.Println("err in session/session.go with newsession")
+	}
 
 	return &Session{
 		ID:     fmt.Sprintf("%x", randID),
@@ -26,7 +30,7 @@ func NewSession(user *user.User) *Session {
 }
 
 var (
-	ErrNoAuth = errors.New("No session found")
+	ErrNoAuth = errors.New("no session found")
 )
 
 type sessKey string

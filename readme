@@ -2,19 +2,13 @@
 
 Все располагается в директории avitointern, она и является главной директорией проекта
 
-{ Текст с последнего коммита
-  Я поздно обнаружил файл с openapi спецификацией для тз, и часть функций реализовано моим "творческим подходом" :)
-  На таких функциях будет написан WARNING или depricated
-  Из-за этого я не успел подвязать данные к бд, но переход к этому уже готов. 
-  Думаю этим заняться уже после того как перепишу под код apiopen.
-}
+настроен линтер в run_lint.sh и .golangci.yml
 
-В целом я мне очень понравилось тз и я в любом случае буду его допишу.
+можно запускать через два терминала: для сервера и клиента.
+можно запускать через docker через docker-compose up --build 
 
-Реализовано все взаимодействие с тендерами в сооттветствии с openapi
-Есть задел под бд и многопоток, для чего все было защищино мьютексами
-docker, k8s, CI/CD пока не настраивал
 
+terminal::
 Процесс запуска:
 1. $ go run ./cmd/avitointern
 
@@ -32,15 +26,16 @@ created session for xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx и есть куки в
 ID для пользователей, организаций и тендеров также выдаются через uuid.
 
 ------
-4. Создание тендера.
+3. Создание тендера.
 Куки, который мы получили на предыдущем сейчас нам понадобится для создания тендера и всех команд (нас не пропустит auth middleware без куки).
 
-$ curl -X POST http://localhost:8080/tenders/new \                    
+$ curl -X POST http://localhost:8080/tenders/new \    
     -H "Content-Type: application/json" \
-    -H "Cookie: session_id=a8892cb8-8203-4d76-a047-637027868159" \
+    -H "Cookie: session_id=5049b826-6b9d-42a8-ac43-0e0cfb7b5e65" \
     -d '{
         "name": "New Tender",
         "description": "This is a new tender",
+        "serviceType": "Construction",
         "organizationId": "123e4567-e89b-12d3-a456-426614174000",
         "creatorUsername": "admin"
     }'
@@ -49,17 +44,18 @@ $ curl -X POST http://localhost:8080/tenders/new \
 "msg":"Insert with id LastInsertId: 0d1df2ea-4b77-41a8-abdc-284082720e82"
 Где LastInsertId - uuid последнего добавленного тендера.
 
+
 5. Вывод тендеров
         $ curl -X GET "http://localhost:8080/tenders?limit=5&offset=0&service_type=[]" \
     -H "Cookie: session_id=a8892cb8-8203-4d76-a047-637027868159" 
 
 6. PING
     $ curl -X GET  http://localhost:8080/ping \
-    -H "Cookie: session_id=86a1e403-2791-4160-b9f1-36d531a32f08" \
+    -H "Cookie: session_id=86a1e403-2791-4160-b9f1-36d531a32f08" 
 
 7. /tenders/my 
-      $ curl -X GET "http://localhost:8080/tenders/my?limit=10&offset=0" \             
-    -H "Cookie: session_id=a8892cb8-8203-4d76-a047-637027868159"
+      $ curl -X GET "http://localhost:8080/tenders/my?limit=10&offset=0&username=george" \             
+    -H "Cookie: session_id=34be181b-3671-4a35-baa4-565f0575c765" 
 
 
 8. "/tenders/{tenderID}/status"
@@ -70,16 +66,17 @@ $ curl -X POST http://localhost:8080/tenders/new \
 Вывод:
 "Created"
 
-7. /tenders/{tenderID}/status
+7. изменение /tenders/{tenderID}/status
 
-      $ curl -X PUT "http://localhost:8080/tenders/88abae1e-8bdd-4942-bf2c-69af7ff4ea5f/status?status=Published&username=george" \                                                      
-    -H "Cookie: session_id=97160098-61a3-4eac-9451-79fd26fde3c9"
+      $ curl -X PUT "http://localhost:8080/tenders/a9405890-5862-41cd-9620-9c48e023a88f/status?status=Published&username=george" \
+    -H "Cookie: session_id=34be181b-3671-4a35-baa4-565f0575c765"
  
   Вывод:  
 "Created"
 {"id":"88abae1e-8bdd-4942-bf2c-69af7ff4ea5f","name":"","description":"","status":"Published","serviceType":"","version":2,"createdAt":"2024-09-20T12:02:22+03:00"}
+в бд все обновлено
 
-8. /tenders/{tenderID}/rollback/{version}
+8. /tenders/{tenderID}/edit
 
   curl -X PATCH "http://localhost:8080/tenders/b37ab8db-6bbb-4147-b5dc-d25b632b17bf/edit?username=george" \
     -H "Cookie: session_id=108e1e43-10ae-428d-bdcd-eeb57b7496c3" \
@@ -99,3 +96,4 @@ $ curl -X POST http://localhost:8080/tenders/new \
     -H "Cookie: session_id=edc8a074-b200-4e3b-b799-447162cde86e"
 "Created"
 {"id":"c27f2967-cd2a-441e-b395-5e9217ec9483","name":"","description":"","status":"Created","serviceType":"","version":2,"createdAt":"2024-09-20T12:41:21+03:00"}
+
